@@ -50,32 +50,37 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 300 
 
 # ---------------------------------------------------------
-# 3. 数据加载与模型训练 (含风险等级自动排序)
+# ---------------------------------------------------------
+# 3. 真正科学的数据训练：剥离背景标签，基于行为与环境聚类
 # ---------------------------------------------------------
 @st.cache_data
 def load_and_train():
     df = pd.read_csv('student-mat.csv')
-    features = ['Pstatus', 'famrel', 'goout', 'Dalc', 'absences']
-    df_selected = df[features].copy()
+    # 【核心修复】：把 Pstatus 从聚类特征中踢出去！
+    # 风险只由家庭关系的恶劣程度和个人的越轨行为决定
+    cluster_features = ['famrel', 'goout', 'Dalc', 'absences']
+    
+    df_selected = df[['Pstatus'] + cluster_features].copy()
     df_selected['Pstatus'] = df_selected['Pstatus'].map({'T': 1, 'A': 0})
     
+    # 只对四个行为/关系特征进行标准化和聚类
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(df_selected)
+    X_scaled = scaler.fit_transform(df_selected[cluster_features])
     
     kmeans = KMeans(n_clusters=3, init='k-means++', random_state=42, n_init=10)
     clusters = kmeans.fit_predict(X_scaled)
     
-    # 确保缺勤最多的组永远是 2 (红色高风险)
-    temp_centers = df_selected.assign(cluster=clusters).groupby('cluster').mean()
-    risk_scores = (1 - temp_centers['Pstatus']) * 100 + temp_centers['absences']
-    order = risk_scores.sort_values().index.tolist()
-    
+    # 依然用最硬核的破坏性指标（缺勤）来给 0, 1, 2 排序
+    temp_df = pd.DataFrame({'cluster': clusters, 'absences': df_selected['absences']})
+    order = temp_df.groupby('cluster')['absences'].mean().sort_values().index.tolist()
     rank_map = {original: new for new, original in enumerate(order)}
+    
     df_selected['Risk_Cluster'] = pd.Series(clusters).map(rank_map)
     
+    # 计算三个群落的常模（展示时依然带上 Pstatus，看看各群落的父母分居比例）
     cluster_centers = df_selected.groupby('Risk_Cluster').mean()
-    return df_selected, scaler, cluster_centers
-df_final, scaler, cluster_centers = load_and_train()
+    
+    return df_selected, scaler, cluster_centers, cluster_features
 # ---------------------------------------------------------
 # 4. 侧边栏：输入个体特征
 # ---------------------------------------------------------
