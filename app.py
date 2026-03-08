@@ -21,11 +21,10 @@ def get_font_properties():
     if os.path.exists(cloud_path):
         return cloud_path
     
-    # 路径 2: 如果路径不对，调用 Linux 终端命令暴力搜索中文字体
+    # 路径 2: 暴力搜索中文字体
     try:
         result = subprocess.run(['fc-list', ':lang=zh', 'file'], capture_output=True, text=True)
         if result.stdout:
-            # 拿到第一个找到的中文字体路径
             return result.stdout.strip().split('\n')[0].split(':')[0].strip()
     except:
         pass
@@ -37,7 +36,6 @@ def get_font_properties():
         
     return None
 
-# 获取物理路径并生成专用字体对象
 font_path = get_font_properties()
 if font_path:
     label_font = fm.FontProperties(fname=font_path, size=12, weight='bold')
@@ -50,14 +48,13 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 300 
 
 # ---------------------------------------------------------
-# ---------------------------------------------------------
 # 3. 真正科学的数据训练：剥离背景标签，基于行为与环境聚类
 # ---------------------------------------------------------
 @st.cache_data
 def load_and_train():
     df = pd.read_csv('student-mat.csv')
+    
     # 【核心修复】：把 Pstatus 从聚类特征中踢出去！
-    # 风险只由家庭关系的恶劣程度和个人的越轨行为决定
     cluster_features = ['famrel', 'goout', 'Dalc', 'absences']
     
     df_selected = df[['Pstatus'] + cluster_features].copy()
@@ -70,17 +67,21 @@ def load_and_train():
     kmeans = KMeans(n_clusters=3, init='k-means++', random_state=42, n_init=10)
     clusters = kmeans.fit_predict(X_scaled)
     
-    # 依然用最硬核的破坏性指标（缺勤）来给 0, 1, 2 排序
+    # 用最硬核的破坏性指标（缺勤）来给 0, 1, 2 排序
     temp_df = pd.DataFrame({'cluster': clusters, 'absences': df_selected['absences']})
     order = temp_df.groupby('cluster')['absences'].mean().sort_values().index.tolist()
     rank_map = {original: new for new, original in enumerate(order)}
     
     df_selected['Risk_Cluster'] = pd.Series(clusters).map(rank_map)
     
-    # 计算三个群落的常模（展示时依然带上 Pstatus，看看各群落的父母分居比例）
+    # 计算三个群落的常模（展示时依然带上 Pstatus）
     cluster_centers = df_selected.groupby('Risk_Cluster').mean()
     
     return df_selected, scaler, cluster_centers, cluster_features
+
+# 【极其重要的一行】：真正执行训练，并把工具箱拿出来！
+df_final, scaler, cluster_centers, cluster_features = load_and_train()
+
 # ---------------------------------------------------------
 # 4. 侧边栏：输入个体特征
 # ---------------------------------------------------------
@@ -102,24 +103,31 @@ absences = st.sidebar.number_input("近期缺勤/逃学次数", 0, 100, 5)
 st.title("⚖️ 未成年人犯罪风险“分级预防”辅助决策系统")
 st.markdown("---")
 
-# 执行预测
+# 【核心逻辑修复】：分离展示数据与预测数据
+# input_data 用于展示完整的雷达图和表格
 input_data = pd.DataFrame([[
     1 if p_status == "同居 (T)" else 0,
     fam_rel, go_out, dalc, absences
 ]], columns=['Pstatus', 'famrel', 'goout', 'Dalc', 'absences'])
 
-input_scaled = scaler.transform(input_data)
-centers_scaled = scaler.transform(cluster_centers)
+# 只提取那 4 个特征去进行归一化和距离计算，避免维度不匹配报错
+input_cluster_data = input_data[cluster_features]
+input_scaled = scaler.transform(input_cluster_data)
+
+centers_cluster_data = cluster_centers[cluster_features]
+centers_scaled = scaler.transform(centers_cluster_data)
+
+# 计算距离并分类
 distances = np.linalg.norm(centers_scaled - input_scaled, axis=1)
 predicted_cluster = np.argmin(distances)
 
-# 风险定义映射
+# 【价值观升级】：消除算法歧视，改用“脆弱度”文案
 risk_info = {
-    0: {"name": "低风险：偶发冲动型", "color": "#3498db", "desc": "个体社会纽带稳固，建议以家庭教育和校内观察为主。"},
-    1: {"name": "中风险：环境诱导脱轨型", "color": "#f39c12", "desc": "受不良同伴诱导产生实质越轨行为，建议切断负面同伴接触。"},
-    2: {"name": "高风险：家庭结构失衡型", "color": "#e74c3c", "desc": "核心监护缺失导致的深层危机，建议立即引入司法社工多部门联动干预。"}
+    0: {"name": "低脆弱度：原生支撑稳固群落", "color": "#3498db", "desc": "个体行为与家庭支撑稳健，建议保持常规普法教育。"},
+    1: {"name": "中脆弱度：结构性失稳群落", "color": "#f39c12", "desc": "【系统提示】：该群落个体存在家庭关系受损或轻度行为越轨，建议社工介入提供『保护性关爱』，防范潜在环境诱导。"},
+    2: {"name": "高脆弱度：环境诱导脱轨群落", "color": "#e74c3c", "desc": "【高危预警】：表现出严重的酗酒与逃学等实质脱轨行为！需立即核实个体行为轨迹，启动多部门联动干预。"}
 }
-risk_map = {0: "低风险：偶发冲动型", 1: "中风险：环境诱导脱轨型", 2: "高风险：家庭结构失衡型"}
+risk_map = {0: "低脆弱度：原生支撑稳固群落", 1: "中脆弱度：结构性失稳群落", 2: "高脆弱度：环境诱导脱轨群落"}
 
 col1, col2 = st.columns([1, 2])
 
@@ -127,16 +135,20 @@ with col1:
     st.metric("综合评价结果", risk_info[predicted_cluster]["name"])
     st.error(f"**干预建议**：{risk_info[predicted_cluster]['desc']}")
     
+    # 【高亮展示算法人文关怀】：当判定为低危险，但属于单亲家庭时的特殊关怀
+    if predicted_cluster == 0 and p_status == "分居 (A)":
+        st.warning("💡 **辅助提示**：该个体当前行为表现良好，但存在【父母分居】的单亲背景。系统并未对其进行风险定罪，但建议学校给予常规的心理支持，防患于未然。")
+    
     st.write("**当前个体特征向量：**")
     st.table(input_data.rename(columns={
         'Pstatus':'父母同居','famrel':'家庭关系','goout':'外出频率','Dalc':'饮酒量','absences':'缺勤'
     }))
 
 with col2:
-    # 动态生成雷达图
+    # 动态生成雷达图 (这里依然使用 5 个特征展示全貌)
     labels = ['父母同居', '家庭关系', '外出频率', '饮酒量', '缺勤']
     plot_vals = input_data.values[0].tolist()
-    plot_vals[4] = min(plot_vals[4], 15) # 缺勤截断保护
+    plot_vals[4] = min(plot_vals[4], 15) 
     
     angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
     angles += angles[:1]
@@ -149,10 +161,9 @@ with col2:
     ax.set_theta_offset(np.pi / 2)
     ax.set_theta_direction(-1)
     
-    # 【核心：强制物理注入字体对象，避开缓存】
     ax.set_thetagrids(np.degrees(angles[:-1]), labels, fontproperties=label_font)
     ax.set_ylim(0, 16)
-    plt.title("个体风险画像雷达图", fontproperties=title_font, pad=20)
+    plt.title("个体综合风险画像雷达图", fontproperties=title_font, pad=20)
     
     st.pyplot(fig)
 
