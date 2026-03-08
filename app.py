@@ -66,16 +66,15 @@ def load_and_train():
     clusters = kmeans.fit_predict(X_scaled)
     
     # 确保缺勤最多的组永远是 2 (红色高风险)
-    temp_df = pd.DataFrame({'cluster': clusters, 'absences': df_selected['absences']})
-    order = temp_df.groupby('cluster')['absences'].mean().sort_values().index.tolist()
-    rank_map = {original: new for new, original in enumerate(order)}
+    temp_centers = df_selected.assign(cluster=clusters).groupby('cluster').mean()
+    risk_scores = (1 - temp_centers['Pstatus']) * 100 + temp_centers['absences']
+    order = risk_scores.sort_values().index.tolist()
     
+    rank_map = {original: new for new, original in enumerate(order)}
     df_selected['Risk_Cluster'] = pd.Series(clusters).map(rank_map)
+    
     cluster_centers = df_selected.groupby('Risk_Cluster').mean()
     return df_selected, scaler, cluster_centers
-
-df_final, scaler, cluster_centers = load_and_train()
-
 # ---------------------------------------------------------
 # 4. 侧边栏：输入个体特征
 # ---------------------------------------------------------
