@@ -75,6 +75,7 @@ def load_and_train():
     
     cluster_centers = df_selected.groupby('Risk_Cluster').mean()
     return df_selected, scaler, cluster_centers
+df_final, scaler, cluster_centers = load_and_train()
 # ---------------------------------------------------------
 # 4. 侧边栏：输入个体特征
 # ---------------------------------------------------------
